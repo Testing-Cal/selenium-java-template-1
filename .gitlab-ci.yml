@@ -1,0 +1,24 @@
+variables:
+  RELEASE_NAME: "project3000"
+  SERVICE_PORT: 4444
+  REGISTRY_URL: 751503455312.dkr.ecr.us-west-2.amazonaws.com/zalenium
+  
+
+stages:
+  - ReleaseCleanup
+  - ReleaseDeploy
+
+ReleaseCleanup:
+   stage: ReleaseCleanup
+   script: 
+   -  echo `pwd`
+   -  cd ./helm && /sbin/helm delete --purge $RELEASE_NAME && exit 0
+   allow_failure: true
+
+
+ReleaseDeploy:
+   stage: ReleaseDeploy
+   script:
+   - echo `pwd`
+   - sed -i s/#SERVICE_PORT#/$SERVICE_PORT/g ./helm/service/values.yaml
+   - cd ./helm && /sbin/helm install service --set desiredContainers=1 --name $RELEASE_NAME

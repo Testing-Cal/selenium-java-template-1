@@ -1,0 +1,4 @@
+{
+	"description" : "Maven structured base project with CICD integrated",
+	"default_interface" : "CLI"
+}
