@@ -187,6 +187,7 @@ pipeline {
                        sh '''
                            sleep 60
                            docker run --rm -v "$WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
+                           mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
                        '''
                      }
                    }
