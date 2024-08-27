@@ -162,11 +162,12 @@ pipeline {
                     }
 
                           withCredentials([file(credentialsId: "$KUBE_SECRET", variable: 'KUBECONFIG')]) {
-                          sh """
+                          env.helmReleaseName = "${metadataVars.helmReleaseName}"
+                          sh '''
                           kubectl create ns "$namespace_name" || true
-                          helm upgrade --install "${generalPresent.helmReleaseName}" -n "$namespace_name" zalenium --atomic --timeout 300s
+                          helm upgrade --install "$helmReleaseName" -n "$namespace_name" zalenium --atomic --timeout 300s
                           sleep 10
-                          """
+                          '''
                             script {
                              env.temp_service_name = "${generalPresent.repoName}-zalenium".take(63)
                              def url = sh (returnStdout: true, script: '''kubectl get svc -n "$namespace_name" | grep "$temp_service_name" | awk '{print $4}' ''').trim()
@@ -200,9 +201,10 @@ pipeline {
                     }
                     if (env.DEPLOYMENT_TYPE == 'KUBERNETES') {
                       withCredentials([file(credentialsId: "$KUBE_SECRET", variable: 'KUBECONFIG')]) {
-                      sh """
-                      helm uninstall "${generalPresent.helmReleaseName}" -n "$namespace_name"
-                      """
+                      env.helmReleaseName = "${metadataVars.helmReleaseName}"
+                      sh '''
+                      helm uninstall "$helmReleaseName" -n "$namespace_name"
+                      '''
                       }
                     }
                   }
