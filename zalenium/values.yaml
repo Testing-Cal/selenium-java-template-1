@@ -37,7 +37,8 @@ hub:
     runAsGroup: 1000
 
   ## Container Security Context
-  containerSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
     ## See all the options here https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.15/#securitycontext-v1-core
     # capabilities: []
     # privileged: false
