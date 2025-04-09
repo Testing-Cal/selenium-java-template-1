@@ -20,7 +20,7 @@ public class HomePageTest {
     public void OpenBrowser() throws Exception {
         //WebDriver driver = setup.setWebDriver();
         String title = driver.getTitle();
-        driver.navigate().to("https://www.yahoo.com");
+        driver.navigate().to("https://www.google.com");
         System.out.println("page title is :" + title);
 
     }
