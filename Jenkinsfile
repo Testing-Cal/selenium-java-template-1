@@ -60,7 +60,7 @@ def pushToCollector(){
 pipeline {
   agent { label agentLabel }
   environment {
-    DEFAULT_STAGE_SEQ = "'CodeCheckout','Deploy','UnitTests','Destroy'"
+    DEFAULT_STAGE_SEQ = "'CodeCheckout','Deploy','UnitTests','publishReports','Destroy'"
     CUSTOM_STAGE_SEQ = "${DYNAMIC_JENKINS_STAGE_SEQUENCE}"
     PROJECT_TEMPLATE_ACTIVE = "${DYNAMIC_JENKINS_STAGE_NEEDED}"
     LIST = "${env.PROJECT_TEMPLATE_ACTIVE == 'true' ? env.CUSTOM_STAGE_SEQ : env.DEFAULT_STAGE_SEQ}"
@@ -193,6 +193,22 @@ pipeline {
                  }
                  else if ("${list[i]}" == "'UnitTests'"  && env.ACTION == 'DEPLOY') {
                    stage('Unit Tests') {
+                     script{
+                       TEMP_STAGE_NAME = "$STAGE_NAME"
+                       sh '''
+                           sleep 60
+                           #docker run --rm -v "$WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
+                           mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
+                           #junit keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
+                           
+                       '''
+                       junit allowEmptyResults: true, keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
+                       publishHTML([allowMissing: true, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'target/surefire-reports/', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: 'Surefire reports', useWrapperFileDirectly: true])
+                     }
+                   }
+                 }
+                 else if ("${list[i]}" == "'publishReports'"  && env.ACTION == 'DEPLOY') {
+                   stage('Publish Reports') {
                      script{
                        TEMP_STAGE_NAME = "$STAGE_NAME"
                        sh '''
