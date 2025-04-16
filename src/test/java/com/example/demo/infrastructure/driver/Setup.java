@@ -20,7 +20,7 @@ public class Setup {
         String browser = System.getProperty("browser");
         String remoteDriverHost;
         if (browser == null) {
-            browser = "chrome";
+            browser = "firefox";
         }
         // In this mode we would be connecting to remote web driver(similar to selenium
         // grid) meaning the script would be executed in the remote server.
@@ -35,7 +35,8 @@ public class Setup {
                 // `{remoteDriverHost}/grid/admin/live`
                 //DesiredCapabilities dcChrome = DesiredCapabilities.chrome();
                 ChromeOptions dcChrome = new ChromeOptions();
-                dcChrome.setCapability("name", "BrowserMode");
+                //dcChrome.setCapability("se:name", "BrowserMode");
+                dcChrome.setCapability("se:recordVideo", true);
                 driver = new RemoteWebDriver(new URL(remoteDriverHost + "/wd/hub"), dcChrome);
                 driver.manage().window().maximize();
                 break;
@@ -44,7 +45,8 @@ public class Setup {
                 // `{remoteDriverHost}/grid/admin/live`
                 //DesiredCapabilities dcFirefox = DesiredCapabilities.firefox();
                 FirefoxOptions dcFirefox = new FirefoxOptions();
-                dcFirefox.setCapability("name", "BrowserMode");
+                //dcFirefox.setCapability("se:name", "BrowserMode");
+                dcFirefox.setCapability("se:recordVideo", true);
                 driver = new RemoteWebDriver(new URL(remoteDriverHost + "/wd/hub"), dcFirefox);
                 driver.manage().window().maximize();
                 break;

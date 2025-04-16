@@ -79,6 +79,8 @@ pipeline {
     ARTIFACTORY_CREDENTIALS = "${ARTIFACTORY_CREDENTIAL_ID}"
     JENKINS_METADATA = "${JENKINS_METADATA}"
     JAVA_MVN_IMAGE_VERSION = "maven:3.8.1-openjdk-17-slim"
+    SELENIUM_IMAGE_TAG = "4.31.0-20250414"
+    SELENIUM_VIDEO_TAG = "ffmpeg-7.1-20250414"
   }
   stages {
      stage('Running Stages') {
@@ -136,10 +138,18 @@ pipeline {
                    script {
                      TEMP_STAGE_NAME = "$STAGE_NAME"
                       if (env.DEPLOYMENT_TYPE == 'EC2') {
-                          sh 'ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker pull public.ecr.aws/lazsa/zalenium:latest"'
-                          sh 'ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker pull elgalu/selenium:latest"'
-                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker stop "${generalPresent.repoName}" || true && docker rm "${generalPresent.repoName}" || true" """
-                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker run -d --restart always --name "${generalPresent.repoName}" -p $SERVICE_PORT:4444 -e PULL_SELENIUM_IMAGE=true -v /var/run/docker.sock:/var/run/docker.sock  -v /tmp/videos-sel:/home/seluser/videos --privileged  public.ecr.aws/lazsa/zalenium:latest start --timeZone "UTC"" """
+                          sh 'ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker pull selenium/hub:$SELENIUM_IMAGE_TAG "'
+                          sh 'ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker pull selenium/node-chrome:$SELENIUM_IMAGE_TAG "'
+                          sh 'ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker pull selenium/node-firefox:$SELENIUM_IMAGE_TAG"'
+                          sh 'ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker pull selenium/video:$SELENIUM_VIDEO_TAG"'
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker stop video-firefox-${generalPresent.repoName} video-chrome-${generalPresent.repoName} firefox-${generalPresent.repoName} chrome-${generalPresent.repoName} selenium-hub-${generalPresent.repoName} || true && docker rm video-firefox-${generalPresent.repoName} video-chrome-${generalPresent.repoName} firefox-${generalPresent.repoName} chrome-${generalPresent.repoName} selenium-hub-${generalPresent.repoName} || true" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker network rm grid-${generalPresent.repoName} || true" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker network create grid-${generalPresent.repoName}" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker run -d -p 4442-4444:4442-4444 --net grid-${generalPresent.repoName} --name selenium-hub-${generalPresent.repoName} selenium/hub:$SELENIUM_IMAGE_TAG" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker run -d --net grid-${generalPresent.repoName} -e SE_EVENT_BUS_HOST=selenium-hub-${generalPresent.repoName} -e SE_VNC_PASSWORD=secret -e SE_RECORD_VIDEO=true --name chrome-${generalPresent.repoName} selenium/node-chrome:$SELENIUM_IMAGE_TAG" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker run -d --net grid-${generalPresent.repoName} -e SE_EVENT_BUS_HOST=selenium-hub-${generalPresent.repoName} -e SE_VNC_PASSWORD=secret -e SE_RECORD_VIDEO=true --name firefox-${generalPresent.repoName} selenium/node-firefox:$SELENIUM_IMAGE_TAG" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker run -d --net grid-${generalPresent.repoName} --name video-firefox-${generalPresent.repoName} -v /tmp/videos:/videos -e SE_NODE_GRID_URL=http://selenium-hub-${generalPresent.repoName}:4444 -e SE_VIDEO_FILE_NAME=auto -e SE_VIDEO_UPLOAD_ENABLED=true -e DISPLAY_CONTAINER_NAME=firefox-${generalPresent.repoName} selenium/video:$SELENIUM_VIDEO_TAG" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker run -d --net grid-${generalPresent.repoName} --name video-chrome-${generalPresent.repoName} -v /tmp/videos:/videos -e SE_NODE_GRID_URL=http://selenium-hub-${generalPresent.repoName}:4444 -e SE_VIDEO_FILE_NAME=auto -e SE_VIDEO_UPLOAD_ENABLED=true -e DISPLAY_CONTAINER_NAME=chrome-${generalPresent.repoName} selenium/video:$SELENIUM_VIDEO_TAG" """
                           env.REMOTE_DRIVER_HOST = "http://$DOCKERHOST:$SERVICE_PORT"
 
                       }
@@ -189,7 +199,11 @@ pipeline {
                            sleep 60
                            #docker run --rm -v "$WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
                            mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
+                           #junit keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
+                           
                        '''
+                       junit allowEmptyResults: true, keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
+                       publishHTML([allowMissing: true, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'target/surefire-reports/', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: 'Surefire reports', useWrapperFileDirectly: true])
                      }
                    }
                  }
@@ -197,7 +211,8 @@ pipeline {
                   stage('Destroy') {
                     TEMP_STAGE_NAME = "$STAGE_NAME"
                     if (env.DEPLOYMENT_TYPE == 'EC2') {
-                      sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker stop "${generalPresent.repoName}" || true && docker rm "${generalPresent.repoName}" || true" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker stop video-firefox-${generalPresent.repoName} video-chrome-${generalPresent.repoName} firefox-${generalPresent.repoName} chrome-${generalPresent.repoName} selenium-hub-${generalPresent.repoName} || true && docker rm video-firefox-${generalPresent.repoName} video-chrome-${generalPresent.repoName} firefox-${generalPresent.repoName} chrome-${generalPresent.repoName} selenium-hub-${generalPresent.repoName} || true" """
+                          sh """ssh -o "StrictHostKeyChecking=no" ciuser@$DOCKERHOST "docker network rm grid-${generalPresent.repoName} || true" """
                     }
                     if (env.DEPLOYMENT_TYPE == 'KUBERNETES') {
                       withCredentials([file(credentialsId: "$KUBE_SECRET", variable: 'KUBECONFIG')]) {
