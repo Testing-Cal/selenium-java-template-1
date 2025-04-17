@@ -81,6 +81,10 @@ pipeline {
     JAVA_MVN_IMAGE_VERSION = "maven:3.8.1-openjdk-17-slim"
     SELENIUM_IMAGE_TAG = "4.31.0-20250414"
     SELENIUM_VIDEO_TAG = "ffmpeg-7.1-20250414"
+    KUBECTL_IMAGE_VERSION = "bitnami/kubectl:1.28" //https://hub.docker.com/r/bitnami/kubectl/tags
+    HELM_IMAGE_VERSION = "alpine/helm:3.8.1" //https://hub.docker.com/r/alpine/helm/tags
+    OC_IMAGE_VERSION = "quay.io/openshift/origin-cli:4.9.0" //https://quay.io/repository/openshift/origin-cli?tab=tags
+
   }
   stages {
      stage('Running Stages') {
@@ -96,7 +100,7 @@ pipeline {
                }
                echo "defaultStagesSequence - $env.DEFAULT_STAGE_SEQ"
                String generalProperties = parseJsonString(env.JENKINS_METADATA,'general')
-               generalPresent = parseJsonArray(generalProperties)
+               metadataVars = parseJsonArray(generalProperties)
                String kubeProperties = parseJsonString(env.JENKINS_METADATA,'kubernetes')
                kubeVars = parseJsonArray(kubeProperties)
 
@@ -119,7 +123,10 @@ pipeline {
                             namespace = "$namespace_prefix-$env.foldername".toLowerCase()
                         }
                     }
-
+                     serviceData = kubeVars.service
+                     serviceType = serviceData.type
+                     print(serviceType)
+                     env.service_type=serviceType
                      service = values[2].replaceAll("[^a-zA-Z0-9\\-\\_]+","").toLowerCase().take(50)
                      print("kube namespace: $namespace")
                      print("service name: $service")
@@ -154,51 +161,41 @@ pipeline {
 
                       }
                       if (env.DEPLOYMENT_TYPE == 'KUBERNETES') {
-                          if (env.ARTIFACTORY == 'JFROG') {
-                              withCredentials([file(credentialsId: "$KUBE_SECRET", variable: 'KUBECONFIG'), usernamePassword(credentialsId: "$ARTIFACTORY_CREDENTIALS", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                              sh '''
-                              kubectl create ns "$namespace_name" || true
-                              kubectl -n "$namespace_name" create secret docker-registry regcred --docker-server="$REGISTRY_URL" --docker-username="\"$USERNAME\"" --docker-password="\"$PASSWORD\"" || true
-                              '''
-                              }
-                          }
-                          if (env.ARTIFACTORY == 'ACR') {
-                        withCredentials([file(credentialsId: "$KUBE_SECRET", variable: 'KUBECONFIG'), usernamePassword(credentialsId: "$ARTIFACTORY_CREDENTIALS", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                          sh '''
-                            kubectl create ns "$namespace_name" || true
-                            kubectl -n "$namespace_name" create secret docker-registry regcred --docker-server="$ACR_LOGIN_URL" --docker-username="\"$USERNAME\"" --docker-password="\"$PASSWORD\"" || true
-                          '''
-                      }
-                    }
 
                           withCredentials([file(credentialsId: "$KUBE_SECRET", variable: 'KUBECONFIG')]) {
-                          env.helmReleaseName = "${metadataVars.helmReleaseName}"
-                          sh '''
-                          kubectl create ns "$namespace_name" || true
-                          helm upgrade --install "$helmReleaseName" -n "$namespace_name" zalenium --atomic --timeout 300s
-                          sleep 10
-                          '''
-                            script {
-                             env.temp_service_name = "${generalPresent.repoName}-zalenium".take(63)
-                             def url = sh (returnStdout: true, script: '''kubectl get svc -n "$namespace_name" | grep "$temp_service_name" | awk '{print $4}' ''').trim()
-                              if (url != "<pending>") {
-                                env.REMOTE_DRIVER_HOST = "http://$url"
-                                print("##\$@\$ http://$url/dashboard ##\$@\$")
-                              }
-                            }
+                              env.helmReleaseName = "${metadataVars.repoName}"
+                              sh '''
+                              docker run --rm  --user root -v "$KUBECONFIG":"$KUBECONFIG" -e KUBECONFIG="$KUBECONFIG" $KUBECTL_IMAGE_VERSION create ns "$namespace_name" || true
+                              mkdir helm || true
+                              mkdir helm-cache || true
+                              docker run --rm  --user root -v "$KUBECONFIG":"$KUBECONFIG" -e KUBECONFIG="$KUBECONFIG" -v "$WORKSPACE":/apps -v "$WORKSPACE"/helm:/root/.config/helm -v "$WORKSPACE"/helm-cache:/root/.config/helm-cache $HELM_IMAGE_VERSION repo add docker-selenium https://www.selenium.dev/docker-selenium
+                              docker run --rm  --user root -v "$KUBECONFIG":"$KUBECONFIG" -e KUBECONFIG="$KUBECONFIG" -v "$WORKSPACE":/apps -v "$WORKSPACE"/helm:/root/.config/helm -v "$WORKSPACE"/helm-cache:/root/.config/helm-cache $HELM_IMAGE_VERSION repo update
+                              docker run --rm  --user root -v "$KUBECONFIG":"$KUBECONFIG" -e KUBECONFIG="$KUBECONFIG" -v "$WORKSPACE":/apps -v "$WORKSPACE"/helm:/root/.config/helm -v "$WORKSPACE"/helm-cache:/root/.config/helm-cache $HELM_IMAGE_VERSION search repo docker-selenium --versions
+                              docker run --rm  --user root -v "$KUBECONFIG":"$KUBECONFIG" -e KUBECONFIG="$KUBECONFIG" -v "$WORKSPACE":/apps -v "$WORKSPACE"/helm:/root/.config/helm -v "$WORKSPACE"/helm-cache:/root/.config/helm-cache $HELM_IMAGE_VERSION upgrade --install "$helmReleaseName" docker-selenium/selenium-grid --set isolateComponents=false --set hub.serviceType="$service_type" --set hub.serviceAnnotations."service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"="internet-facing" -n "$namespace_name"
+
+                              sleep 20
+                              '''
+                                script {
+                                env.temp_service_name = "${metadataVars.repoName}-selenium-hub".take(63)
+                                def url = sh (returnStdout: true, script: '''kubectl get svc -n "$namespace_name" | grep "$temp_service_name" | awk '{print $4}' ''').trim()
+                                  if (url != "<pending>") {
+                                    env.REMOTE_DRIVER_HOST = "http://$url:4444"
+                                    print("##\$@\$ http://$url:4444/ ##\$@\$")
+                                  }
+                                }
                           }
                       }
+                    }
                    }
                   }
-                 }
                  else if ("${list[i]}" == "'UnitTests'"  && env.ACTION == 'DEPLOY') {
                    stage('Unit Tests') {
                      script{
                        TEMP_STAGE_NAME = "$STAGE_NAME"
                        sh '''
                            sleep 60
-                           #docker run --rm -v "$WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
-                           mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
+                           docker run --rm -v "$WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
+                           #mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
                            #junit keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
                            
                        '''
@@ -210,14 +207,6 @@ pipeline {
                  else if ("${list[i]}" == "'publishReports'"  && env.ACTION == 'DEPLOY') {
                    stage('Publish Reports') {
                      script{
-                       TEMP_STAGE_NAME = "$STAGE_NAME"
-                       sh '''
-                           sleep 60
-                           #docker run --rm -v "$WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
-                           mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
-                           #junit keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
-                           
-                       '''
                        junit allowEmptyResults: true, keepLongStdio: true, skipMarkingBuildUnstable: true, testResults: 'target/surefire-reports/*.xml'
                        publishHTML([allowMissing: true, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'target/surefire-reports/', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: 'Surefire reports', useWrapperFileDirectly: true])
                      }
