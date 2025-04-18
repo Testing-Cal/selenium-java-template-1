@@ -91,7 +91,7 @@ jobs:
 
 
           # get dns of svc
-          echo "REMOTE_DRIVER_HOST=$(kubectl get svc $temp_service_name -n $KUBE_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'):4444" >> "$GITHUB_ENV"
+          echo "REMOTE_DRIVER_HOST=http://$(kubectl get svc $temp_service_name -n $KUBE_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'):4444" >> "$GITHUB_ENV"
 
 
       - name: Unit Test
