@@ -99,7 +99,7 @@ jobs:
         run: | 
          sleep 60
          echo $REMOTE_DRIVER_HOST
-         docker run --rm -v "$GITHUB_WORKSPACE":/usr/src/mymaven -e GRID_URL="k8s-default-ccccsele-07fbec8c31-d0f9b790e40156d5.elb.us-east-1.amazonaws.com" -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="k8s-default-ccccsele-07fbec8c31-d0f9b790e40156d5.elb.us-east-1.amazonaws.com"
+         docker run --rm -v "$GITHUB_WORKSPACE":/usr/src/mymaven -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="$REMOTE_DRIVER_HOST"
 
       - name: Destroy
         if: env.ACTION == 'DESTROY'
