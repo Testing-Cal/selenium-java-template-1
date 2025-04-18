@@ -1,0 +1,129 @@
+name: Selenium-grid-Dev
+
+on: 
+  workflow_dispatch:
+
+
+jobs:
+  selenium-grid-deploy:
+    runs-on: ${{ vars.RUNNER_NAME_DEV }}
+    environment:
+      name: "DEV"
+    env:
+      KUBECTL_IMAGE_VERSION: "bitnami/kubectl:1.28" #https://hub.docker.com/r/bitnami/kubectl/tags
+      HELM_IMAGE_VERSION: "alpine/helm:3.8.1" #https://hub.docker.com/r/alpine/helm/tags
+      OC_IMAGE_VERSION: "quay.io/openshift/origin-cli:4.9.0" #https://quay.io/repository/openshift/origin-cli?tab=tags
+      JAVA_MVN_IMAGE_VERSION : "maven:3.8.1-openjdk-8-slim"
+
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+          
+      - name: Initialization
+        run: |
+          sudo apt install yq -y 
+          JSON_STRING='${{ vars.CI_METADATA }}'
+
+          # push to collector
+          echo "TENANT_ID=$(echo "$JSON_STRING" | jq -r '.general.tenant')" >> "$GITHUB_ENV"
+          echo "TARGET_URI=$(echo "$JSON_STRING" | jq -r '.general.lazsaDomainUri')" >> "$GITHUB_ENV"
+          echo "AGENT_ID=$(echo "$JSON_STRING" | jq -r '.general.agentId')" >> "$GITHUB_ENV"
+          echo "AGENT_API_KEY=$(echo "$JSON_STRING" | jq -r '.general.agentApiKey')" >> "$GITHUB_ENV"
+          echo "DEVOPS_SETTING_ID=$(echo "$JSON_STRING" | jq -r '.general.devopsSettingId')" >> "$GITHUB_ENV"
+         
+          echo "REGISTRY_URL=$(echo "$JSON_STRING" | jq -r '.general.containerImagePath')" >> "$GITHUB_ENV"
+          echo "BUILD_TAG=$(echo "$JSON_STRING" | jq -r '.general.containerImageTag')"  >> "$GITHUB_ENV"
+          echo "ARTIFACTORY=$(echo "$JSON_STRING" | jq -r '.general.artifactory')"  >> "$GITHUB_ENV"
+          echo "REPO_NAME=$(echo "$JSON_STRING" | jq -r '.general.repoName')"  >> "$GITHUB_ENV"
+          echo "CONTEXT=$(echo "$JSON_STRING" | jq -r '.general.contextPath')" >> "$GITHUB_ENV"
+          
+          echo "HELM_RELEASE_NAME=$(echo "$JSON_STRING" | jq -r '.general.helmReleaseName')" >> "$GITHUB_ENV"
+          echo "KUBE_NAMESPACE=$(echo "$JSON_STRING" | jq -r '.kubernetes.namespace')" >> "$GITHUB_ENV"
+          echo "KUBE_SERVICE_TYPE=$(echo "$JSON_STRING" | jq -r '.kubernetes.service.type')" >> "$GITHUB_ENV"
+          echo "ARTIFACTORY_USER_SECRET=$(echo "$JSON_STRING" | jq -r '.general.artifactoryUserSecret')" >> "$GITHUB_ENV"
+          echo "ARTIFACTORY_PASSWORD_SECRET=$(echo "$JSON_STRING" | jq -r '.general.artifactoryPasswordSecret')" >> "$GITHUB_ENV"
+          export REGISTRY_URL="$(echo "$JSON_STRING" | jq -r '.general.containerImagePath')"
+          echo "DOCKER_LOGIN_URL=$(echo "$REGISTRY_URL" | cut -d'/' -f1)" >> "$GITHUB_ENV"
+          echo "ACTION=$(echo "$JSON_STRING" | jq -r '.general.action')" >> "$GITHUB_ENV"
+          echo "K8S_SECRET_NAME=$(echo "$JSON_STRING" | jq -r '.general.artifactoryPasswordSecret' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-253)" >> "$GITHUB_ENV"
+
+
+          echo "$JSON_STRING" | jq -r '.kubernetes' | yq --yaml-output > Helm.yaml
+          #echo "$JSON_STRING" | jq -r '.kubernetes.vault' | yq  > Vault.yaml    
+          
+
+      - name: Configure Kubeconfig File
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ env.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
+      
+         
+      - name: Deploy to Kubernetes
+        if: env.ACTION == 'DEPLOY' 
+        run: |
+
+          docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" $KUBECTL_IMAGE_VERSION create ns "$KUBE_NAMESPACE" || true
+          if [[ $DEPLOYMENT_TYPE == 'OPENSHIFT' ]]
+           then
+              COUNT=$(grep 'serviceAccount' Helm.yaml | wc -l)
+              if [[ $COUNT -gt 0 ]]
+              then
+                  ACCOUNT=$(grep 'serviceAccount:' Helm.yaml | tail -n1 | awk '{ print $2}')
+                  echo $ACCOUNT
+              else
+                  ACCOUNT='default'
+              fi
+              docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" -v "$GITHUB_WORKSPACE":/apps -w /apps $OC_IMAGE_VERSION oc adm policy add-scc-to-user anyuid -z $ACCOUNT -n "$KUBE_NAMESPACE"
+          fi
+
+          mkdir helm || true
+          mkdir helm-cache || true
+          docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" -v "$GITHUB_WORKSPACE":/apps -v "$GITHUB_WORKSPACE"/helm:/root/.config/helm -v "$GITHUB_WORKSPACE"/helm-cache:/root/.cache/helm $HELM_IMAGE_VERSION repo add docker-selenium https://www.selenium.dev/docker-selenium
+          docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" -v "$GITHUB_WORKSPACE":/apps -v "$GITHUB_WORKSPACE"/helm:/root/.config/helm -v "$GITHUB_WORKSPACE"/helm-cache:/root/.cache/helm $HELM_IMAGE_VERSION repo update
+          docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" -v "$GITHUB_WORKSPACE":/apps -v "$GITHUB_WORKSPACE"/helm:/root/.config/helm -v "$GITHUB_WORKSPACE"/helm-cache:/root/.cache/helm $HELM_IMAGE_VERSION search repo docker-selenium --versions
+          docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" -v "$GITHUB_WORKSPACE":/apps -v "$GITHUB_WORKSPACE"/helm:/root/.config/helm -v "$GITHUB_WORKSPACE"/helm-cache:/root/.cache/helm $HELM_IMAGE_VERSION upgrade --install "$HELM_RELEASE_NAME" docker-selenium/selenium-grid --set isolateComponents=false --set hub.serviceType="$KUBE_SERVICE_TYPE" --set hub.serviceAnnotations."service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"="internet-facing" --version 0.42.1 -n "$KUBE_NAMESPACE"
+          sleep 20
+
+          export temp_service_name="$HELM_RELEASE_NAME-selenium-hub"
+
+
+          # get dns of svc
+          echo "REMOTE_DRIVER_HOST=$(kubectl get svc $temp_service_name -n $KUBE_NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'):4444" >> "$GITHUB_ENV"
+
+
+      - name: Unit Test
+        if: env.ACTION == 'DEPLOY'
+        run: | 
+         sleep 60
+         echo $REMOTE_DRIVER_HOST
+         docker run --rm -v "$GITHUB_WORKSPACE":/usr/src/mymaven -e GRID_URL="k8s-default-ccccsele-07fbec8c31-d0f9b790e40156d5.elb.us-east-1.amazonaws.com" -w /usr/src/mymaven $JAVA_MVN_IMAGE_VERSION mvn clean install -DREMOTE_DRIVER_HOST="k8s-default-ccccsele-07fbec8c31-d0f9b790e40156d5.elb.us-east-1.amazonaws.com"
+
+      - name: Destroy
+        if: env.ACTION == 'DESTROY'
+        run: | 
+         docker run --rm  --user root -v "$HOME/.kube/config":"/.kube/config" -e KUBECONFIG="/.kube/config" -v "$GITHUB_WORKSPACE":/apps -w /apps $HELM_IMAGE_VERSION uninstall "$HELM_RELEASE_NAME" -n "$KUBE_NAMESPACE"  
+
+      - name: Push to collector
+        if: always()
+        run: |
+          sudo chown -R `id -u`:`id -g` "$GITHUB_WORKSPACE"
+          echo "Workflow Run ID:${GITHUB_RUN_ID}, Workflow Run Number: ${GITHUB_RUN_NUMBER}, Workflow Name: ${GITHUB_WORKFLOW}, Github Repository: ${GITHUB_REPOSITORY}, Job Name: ${GITHUB_JOB}, Tenant ID: $TENANT_ID, Target URI: $TARGET_URI"
+          if [[ $TENANT_ID != "" && $TARGET_URI != "" ]];then 
+                curl -k -X POST "$TARGET_URI/collector/orchestrator/devops/details" \
+                  -H 'X-TenantID: $TENANT_ID' \
+                  -H 'Content-Type: application/json'\
+                  -d '{
+                        "workflowName": "'"${GITHUB_WORKFLOW}"'",
+                        "workflowId": "'"${GITHUB_RUN_ID}"'",
+                        "workflowNumber": "'"${GITHUB_RUN_ID}"'",
+                        "repo": "'"${GITHUB_REPOSITORY}"'",
+                        "agentId": "'"${AGENT_ID}"'",
+                        "devopsConfigId": "'"${DEVOPS_SETTING_ID}"'",
+                        "agentApiKey": "'"${AGENT_API_KEY}"'",
+                        "buildNumber": "'"${GITHUB_RUN_NUMBER}"'"
+                      }'
+                echo "push to collector stage Completed"
+          fi
